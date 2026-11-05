@@ -60,3 +60,7 @@ Open **Canteen Reports** for the DM 536, s. 2026 library, school settings, suppl
 ## Bank List and Income Statement
 
 Open **Bank List** for Bank Information (GL account combobox), bank-specific Bank Reconciliation, and Check Setup with validated check-number ranges. **Income Statement** is a monthly management report with revenue, mapped COGS, gross profit, expenses and net income, in detailed/condensed form with PDF/DOCX/XLSX exports. See [banking setup and validation](docs/banking.md). Migration 3 preserves existing reconciliation records and adds bank/check-range tables. Run `DOTNET_EXECUTABLE=dotnet python3 tests/banking.py` to test these workflows.
+
+## Proposed school-level access design
+
+[School-level isolation design](docs/design/school-isolation.md) specifies separate accounting databases per school, a central identity/access control database, request-scoped school resolution, approved-device integration, report/file isolation and a migration/test plan. It is a design only: the current prototype still has no authentication or enforced school isolation.
