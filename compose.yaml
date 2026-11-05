@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: ledger-ph-postgres
+    environment:
+      POSTGRES_USER: ledger
+      POSTGRES_DB: accounting
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 scripts/setup_postgres.py}
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ledger -d accounting']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+volumes:
+  postgres_data:
