@@ -1,6 +1,6 @@
 # School-level isolation design
 
-Status: **proposed design, not implemented**. Applies to the existing React / .NET 10 / PostgreSQL application. The current app still has no authentication and uses one shared workspace; this document does not make it safe to onboard multiple schools yet.
+Status: **architecture implemented locally**. This document preserves the design rationale. See ../school-access-implementation.md for the implemented account/MFA/session, database, certificate-gate, audit, provisioning and test behavior. Real school onboarding still requires the documented private production deployment and explicit data-owner assignment.
 
 ## Decision
 
@@ -231,4 +231,4 @@ Create two real test databases on one PostgreSQL cluster and the same API instan
 | Restore one school's backup | Other school untouched, marker validated and control totals preserved |
 | Existing regression suites on each school | Accounting, 34 report types/102 exports and banking rules still pass |
 
-Current verification for this design task: existing routes, persistence implementation and all 16 existing tables were inspected. No authentication, migration or cross-school security tests have been implemented or run by creating this design document. Implementation is the next development phase.
+Implementation evidence is recorded in ../school-access-implementation.md. Authenticated two-school, device-certificate, backup/restore and browser tests now accompany the original financial suites. The production infrastructure itself has not been deployed automatically.

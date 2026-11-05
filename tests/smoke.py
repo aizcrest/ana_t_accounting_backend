@@ -4,7 +4,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 class AccountingTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  cls.temp=tempfile.TemporaryDirectory(); env=os.environ.copy();env.update(ACCOUNTING_DATA_PATH=cls.temp.name+'/ledger.json',ASPNETCORE_URLS='http://127.0.0.1:5081')
+  cls.temp=tempfile.TemporaryDirectory(); env=os.environ.copy();env.update(Ledger__Mode="LegacyTest",ASPNETCORE_ENVIRONMENT="Development");env.update(ACCOUNTING_DATA_PATH=cls.temp.name+'/ledger.json',ASPNETCORE_URLS='http://127.0.0.1:5081')
   env.pop('ConnectionStrings__Accounting',None)
   cls.pg_database=None
   if os.environ.get('ACCOUNTING_TEST_POSTGRES')=='1':

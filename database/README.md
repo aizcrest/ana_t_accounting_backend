@@ -20,37 +20,23 @@ The app uses PostgreSQL 18 with Npgsql 10 and .NET 10. SQL Server dependencies a
 
 Schema version 1 is in `001_initial.sql`. It is embedded and applied transactionally. Documents use sourceId for PR→PO, Invoice→Collection and AP→Disbursement links. Constraints enforce unique document numbers, foreign keys, valid categories and nonnegative journal amounts; the save operation also verifies leaf postings, account ancestry and balanced posted documents. The API validates source type, card and available settlement balance.
 
-## Local PostgreSQL setup
+## Authentication and school isolation
 
-Requires Docker Compose, Python 3 and .NET SDK 10.0.403. From the backend directory:
+The original business tables now live in separate school databases, with banks/check ranges (migration 3) and immutable tenant/audit structures (migration 4). Identity, school registrations, memberships, sessions, devices and grants live in a separate control database. See [the current implementation guide](../docs/school-access-implementation.md).
 
 ```bash
 dotnet restore --locked-mode
 dotnet build --no-restore
-python3 scripts/setup_postgres.py
-python3 scripts/run_postgres_api.py
+python3 scripts/setup_secure_sample.py
+python3 scripts/run_secure_api.py
 ```
 
-Cloud commands use `/workspace/.dotnet/dotnet`, `DOTNET_CLI_HOME=/workspace/.dotnet-home` and `NUGET_PACKAGES=/workspace/.nuget/packages`.
+The first setup prompts privately for administrator credentials. Existing `accounting` and ignored JSON books are left untouched; explicit owner-approved legacy import is a separate command. `setup_postgres.py` starts the local container but does not initialize a global anonymous accounting API. The old `run_postgres_api.py` name now launches secure mode.
 
-Setup generates a random local password in ignored `.local/postgres.env`, starts the official PostgreSQL 18 image on **127.0.0.1:5432**, waits for health and initializes `accounting`. Its local connection is stored in ignored `.local/postgres-connection.json`. PostgreSQL data persists in the Compose volume `postgres_data`; do not delete that volume to restart the sample. The API imports the existing local JSON ledger only when the database is empty, otherwise it retains database data. The original JSON file is preserved but stops receiving writes while PostgreSQL mode is active.
+Normal startup requires restricted control credentials. Every financial request resolves a verified membership/support context to its own restricted school connection and checks the immutable marker. No fallback database is used when auth/storage fails. PostgreSQL remains private; production runtime connections require SSL Mode=VerifyFull.
 
-The container is a local-only development service. For remote databases set `ConnectionStrings__Accounting` securely and use a verified TLS connection such as SSL Mode=VerifyFull with a trusted root certificate; never commit credentials. PostgreSQL connections configured but unavailable cause startup to fail. Without an explicit connection, the API retains JSON fallback mode for offline development.
-
-## Browser sample
-
-From the backend directory, `python3 scripts/start_sample.py` builds React, copies generated static assets into ignored `wwwroot`, builds .NET, initializes PostgreSQL and starts the complete app on localhost port 5080. This requires Node.js 22+ as well as the tools above. Open that address on the same computer. No public internet preview or authentication is provided.
+The small-workload repository still writes an atomic snapshot, but snapshots/revisions are now request-scoped and confined to a verified school database. Committed mutations append an audit event in the same transaction. There is no global cached ledger or cross-school connection selector controlled by the browser.
 
 ## Validation
 
-```bash
-python3 scripts/run_postgres_api.py --check-database
-python3 scripts/run_postgres_api.py --database-self-test
-ACCOUNTING_TEST_POSTGRES=1 DOTNET_EXECUTABLE=dotnet python3 tests/smoke.py
-```
-
-The database self-test creates a generated `accounting_test_<guid>` database, verifies migration, seed/reload, stale-write rejection and constraint rollback, then drops only that test database. The HTTP suite with ACCOUNTING_TEST_POSTGRES=1 also uses a generated temporary PostgreSQL database, runs all 10 accounting tests and removes it. Without that flag the suite uses temporary JSON data and clears inherited database bindings. Both modes have passed. SQL self-tests require a development identity with create/drop database privileges; ordinary shared deployment should provision schema separately with a restricted application identity.
-
-## Persistence scope
-
-This is a small single-workspace prototype. Parameterized writes replace the in-memory snapshot within one serializable transaction, guarded by a revision check. Use one API process; other processes may hold cached reads until restarted or a conflict reload. Incremental repositories, audit history, multi-company isolation and enforced authorization remain separate work. No real financial data should be placed in the downloadable sample.
+Use `tests/isolation.py` and `tests/device_access.py` for real authentication/isolation and TLS-device checks. The report, banking and accounting regression scripts explicitly select loopback LegacyTest to check their calculations separately; passing those does not alone validate authentication. `--report-export-self-test` runs offline without serving financial routes. Never expose regression mode through public interfaces or tunnels.

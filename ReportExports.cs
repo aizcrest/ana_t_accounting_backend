@@ -10,6 +10,7 @@ using PdfSharp.Pdf;
 
 static class ReportExports
 {
+ static ReportExports(){if(GlobalFontSettings.FontResolver==null)GlobalFontSettings.FontResolver=new ReportFontResolver();}
  static readonly CultureInfo Culture=CultureInfo.GetCultureInfo("en-PH");
  static string Text(object? v)=>v switch{decimal n=>n.ToString("N2",Culture),double n=>n.ToString("N2",Culture),_=>Convert.ToString(v,Culture)??""};
  static List<string> Heading(CanteenReport r)=>["Republic of the Philippines","Department of Education","REGION IV-A CALABARZON · SCHOOLS DIVISION OF BATANGAS",r.School,r.Title,$"{r.PeriodStart:dd MMM yyyy} – {r.PeriodEnd:dd MMM yyyy} | {(r.Category=="Management"?"Management report — no separate memo deadline":$"Due {r.DueDate:dd MMM yyyy}")}",$"School ID: {r.SchoolId} | Sub-office: {r.SubOffice}",$"{r.Profile} | {r.Status.ToUpperInvariant()} | Amounts in PHP"];
@@ -39,7 +40,7 @@ static class ReportExports
   body.Append(Para("Prepared by: "+r.PreparedBy));body.Append(Para("School head: "+r.SchoolHead));body.Append(Para(r.Source));body.Append(Para("ONE COPY · PORTRAIT · Securely fastened in a folder. Verify original supporting documents."));
   body.Append(new W.SectionProperties(new W.PageSize{Width=11906,Height=16838,Orient=W.PageOrientationValues.Portrait},new W.PageMargin{Top=720,Bottom=720,Left=720,Right=720}));main.Document.Save();
  }return stream.ToArray();}
- static byte[] Pdf(CanteenReport r){if(GlobalFontSettings.FontResolver==null)GlobalFontSettings.FontResolver=new ReportFontResolver();using var pdf=new PdfDocument();pdf.Info.Title=r.Title;pdf.Info.Subject="School canteen report · "+r.Status;pdf.Info.Author=r.School;
+ static byte[] Pdf(CanteenReport r){using var pdf=new PdfDocument();pdf.Info.Title=r.Title;pdf.Info.Subject="School canteen report · "+r.Status;pdf.Info.Author=r.School;
   PdfPage page=null!;XGraphics graphics=null!;double y=0;var font=new XFont("Report",8.5,XFontStyleEx.Regular);var bold=new XFont("Report",8.5,XFontStyleEx.Bold);double left=34,width=527;
   void NewPage(){graphics?.Dispose();page=pdf.AddPage();page.Size=PdfSharp.PageSize.A4;page.Orientation=PdfSharp.PageOrientation.Portrait;graphics=XGraphics.FromPdfPage(page);y=34;graphics.DrawString($"DM 536, s. 2026 | {r.Status} | Page {pdf.PageCount}",font,XBrushes.Gray,new XPoint(left,818));}
   List<string> Wrap(string text,double max,XFont f){var result=new List<string>();foreach(var paragraph in text.Replace("\r","").Split('\n')){string line="";foreach(var word in paragraph.Split(' ')){var next=line.Length==0?word:line+" "+word;if(graphics.MeasureString(next,f).Width<=max){line=next;continue;}if(line!=""){result.Add(line);line="";}string chunk="";foreach(var ch in word){if(graphics.MeasureString(chunk+ch,f).Width>max){result.Add(chunk);chunk="";}chunk+=ch;}line=chunk;}result.Add(line);}return result;}

@@ -5,7 +5,7 @@ DOTNET=os.environ.get('DOTNET_EXECUTABLE','dotnet')
 
 def main():
  name='accounting_test_'+uuid.uuid4().hex
- env=os.environ.copy();binding=json.loads((ROOT/'.local/postgres-connection.json').read_text())['ConnectionStrings__Accounting'];env.update(ConnectionStrings__Accounting=binding.replace('Database=accounting;',f'Database={name};'),ASPNETCORE_URLS='http://127.0.0.1:5082')
+ env=os.environ.copy();env.update(Ledger__Mode="LegacyTest",ASPNETCORE_ENVIRONMENT="Development");binding=json.loads((ROOT/'.local/postgres-connection.json').read_text())['ConnectionStrings__Accounting'];env.update(ConnectionStrings__Accounting=binding.replace('Database=accounting;',f'Database={name};'),ASPNETCORE_URLS='http://127.0.0.1:5082')
  with tempfile.TemporaryDirectory() as tmp:
   env['ACCOUNTING_DATA_PATH']=tmp+'/ledger.json';process=subprocess.Popen([DOTNET,str(ROOT/'bin/Debug/net10.0/Accounting.Api.dll')],env=env,cwd=ROOT,stdout=subprocess.DEVNULL)
   def req(path,method='GET',body=None,raw=False):

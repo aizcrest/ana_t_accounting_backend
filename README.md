@@ -1,25 +1,23 @@
 # Ledger PH — accounting API
 
-ASP.NET Core 10 development API for a generic Philippine-peso accounting workspace. Pair with `../ana_t_accounting_frontend` (React + TypeScript). Supports PostgreSQL 18 via Npgsql, with an explicit JSON fallback for local development.
+ASP.NET Core 10 development API for a generic Philippine-peso accounting workspace. Pair with `../ana_t_accounting_frontend` (React + TypeScript). Uses a central Identity control database and a separate restricted PostgreSQL database per school. Approved-account login and MFA are required.
 
 ## Run
 
-Install .NET SDK 10.0.403 (pinned by global.json), then run `dotnet run --urls http://127.0.0.1:5080` from this directory. In this cloud environment use:
+Install .NET SDK 10.0.403 (pinned by global.json), Docker Compose and Python 3. From this backend directory:
 
 ```bash
-export DOTNET_CLI_HOME=/workspace/.dotnet-home
-export NUGET_PACKAGES=/workspace/.nuget/packages
-/workspace/.dotnet/dotnet build
-ASPNETCORE_URLS=http://127.0.0.1:5080 /workspace/.dotnet/dotnet run --no-build
+dotnet restore --locked-mode
+dotnet build --no-restore
+python3 scripts/setup_secure_sample.py
+python3 scripts/run_secure_api.py
 ```
 
-Without a SQL connection, data is seeded on first launch and saved atomically to ignored `data/ledger.json`. `ACCOUNTING_DATA_PATH` overrides this location. Back up the file before replacing or deleting it. Single-process local development storage; not a multi-server production database.
+First setup prompts privately for the administrator email/password. Sign in, enroll MFA, then invite a school Operator or create a read-only support grant. For the full React build and startup use `python3 scripts/start_sample.py` (also requires Node.js 22+). In this cloud use `/workspace/.dotnet/dotnet`, `DOTNET_CLI_HOME=/workspace/.dotnet-home` and `NUGET_PACKAGES=/workspace/.nuget/packages`.
 
-## PostgreSQL
+Existing legacy PostgreSQL/JSON books are not assigned or imported automatically. Real schools require explicit registration, offline provisioning and named-user invitations. The web process uses restricted control/school roles and never creates databases or applies migrations. There is no default anonymous/JSON fallback; the old storage harness is available only to explicit loopback regression tests.
 
-See [database/README.md](database/README.md) for the schema, local PostgreSQL 18 setup, connection configuration and integration checks. Set `ConnectionStrings__Accounting` to enable PostgreSQL persistence. If PostgreSQL is configured but unavailable, startup fails rather than silently falling back. An empty PostgreSQL database imports the existing local JSON ledger, or uses the seed data if no local file exists. Existing PostgreSQL data is retained on startup.
-
-The backend now targets **net10.0**, SDK **10.0.403**, the latest stable SDK reported by Microsoft release metadata on 2026-11-05. The running local API has been restarted on .NET 10.
+See [the secure implementation and deployment guide](docs/school-access-implementation.md) for approved workstation certificates, verified database TLS, bootstrap/recovery, legacy import, audit and encrypted backups. No external Tailscale setup or public deployment has been configured automatically.
 
 ## Modules and accounting rules
 
@@ -32,7 +30,7 @@ The backend now targets **net10.0**, SDK **10.0.403**, the latest stable SDK rep
 
 ## API
 
-`GET /api/health`, `GET /api/state`, `POST /api/accounts`, `/api/cards`, `/api/items`, `/api/documents`, `POST /api/documents/{id}/post`, `PUT /api/approvals`, `PUT /api/access`.
+`GET /api/health`, `GET /api/state`, `POST /api/accounts`, `/api/cards`, `/api/items`, `/api/documents`, `POST /api/documents/{id}/post`, `PUT /api/approvals`. Legacy module preferences are read-only in authenticated operation; the administrator manages roles.
 
 `GET /api/reports/{trial-balance|balance-sheet|general-ledger|subsidiary-ledger}` accepts optional `from`, `to` (ISO dates), `account` and `card`. Balance sheet UI deliberately uses an as-of date rather than period movements.
 
@@ -51,7 +49,7 @@ Official retrieval attempted on 2026-11-05 from https://www.bir.gov.ph and https
 
 ## Scope and limitations
 
-This is a functional local development prototype, not production accounting software. No authentication, tenant isolation, audit trail, approval-state workflow, period locks, reversal workflow, document editing/cancellation, automatic taxes, inventory costing, or statutory certification. Module access policies are persisted configuration only and do not enforce security. Signatories are names snapshotted on document creation, not digital approvals. All data is visible to anyone who can access the local API. Bind the API to loopback and use synthetic data. Build authentication and enforced authorization before any shared deployment.
+Approved accounts, MFA, server-side role checks, school-specific databases and audit are implemented. Shared production deployment additionally requires the documented private HTTPS/client-certificate and PostgreSQL TLS configuration. Approval-state workflows, period locks, reversal workflows, document editing/cancellation, automatic taxes, inventory costing and statutory certification remain outside the prototype. Signatory names are metadata, not digital approvals. Legacy module preferences cannot grant privileges; the administrator controls Operator/Viewer access. Use synthetic data in the loopback sample.
 
 ## School canteen reports
 
@@ -61,6 +59,6 @@ Open **Canteen Reports** for the DM 536, s. 2026 library, school settings, suppl
 
 Open **Bank List** for Bank Information (GL account combobox), bank-specific Bank Reconciliation, and Check Setup with validated check-number ranges. **Income Statement** is a monthly management report with revenue, mapped COGS, gross profit, expenses and net income, in detailed/condensed form with PDF/DOCX/XLSX exports. See [banking setup and validation](docs/banking.md). Migration 3 preserves existing reconciliation records and adds bank/check-range tables. Run `DOTNET_EXECUTABLE=dotnet python3 tests/banking.py` to test these workflows.
 
-## Proposed school-level access design
+## Authentication and school isolation
 
-[School-level isolation design](docs/design/school-isolation.md) specifies separate accounting databases per school, a central identity/access control database, request-scoped school resolution, approved-device integration, report/file isolation and a migration/test plan. It is a design only: the current prototype still has no authentication or enforced school isolation.
+The app requires approved accounts and MFA and routes each request to a separately permissioned school database. Use [the implementation and secure setup guide](docs/school-access-implementation.md) for administrator bootstrap, invitations, workstation certificates, migration, audit, encrypted backups, tests and deployment. The [architecture design](docs/design/school-isolation.md) records the design rationale. Existing legacy books are not automatically assigned or imported.

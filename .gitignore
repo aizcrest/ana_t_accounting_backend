@@ -4,3 +4,9 @@ data/*.json
 .local/
 __pycache__/
 wwwroot/
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key

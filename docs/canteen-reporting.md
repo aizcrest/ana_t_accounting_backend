@@ -57,4 +57,4 @@ ACCOUNTING_TEST_POSTGRES=1 DOTNET_EXECUTABLE=dotnet python3 tests/smoke.py
 
 The export self-test checks all 34 types / 102 format combinations, PDF portrait pages and official Word/Excel XML schemas. The canteen integration suite checks all 28 default previews / 84 exports, quarter/year deadline boundaries, ledger totals, bank differences, stock balance, spreadsheet formula safety, conditional profiles, submission sequence and persistence across API restart in a generated PostgreSQL database. Existing accounting regression tests remain separate. Test databases are removed; the working school ledger is not changed by these suites.
 
-The app remains a local prototype without authentication or enforced access policies. No current BIR ATC verification or automatic tax computation has been added by this report work.
+The app now uses approved accounts, MFA, per-school databases and enforced Operator/Viewer access. Production requires the documented device-certificate and private-network configuration. No current BIR ATC verification or automatic tax computation has been added by this report work.

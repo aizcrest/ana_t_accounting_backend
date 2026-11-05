@@ -15,6 +15,5 @@ def main():
   password=password_file.read_text().strip().split('=',1)[1]
   private_write(connection_file,json.dumps({'ConnectionStrings__Accounting':f'Host=127.0.0.1;Port=5432;Database=accounting;Username=ledger;Password={password}'}))
  subprocess.run(docker+['compose','--env-file',str(password_file),'up','-d','--wait'],cwd=ROOT,check=True)
- subprocess.run([sys.executable,'scripts/run_postgres_api.py','--check-database'],cwd=ROOT,check=True)
- print('PostgreSQL sample initialized. Start with python3 scripts/run_postgres_api.py')
+ print('PostgreSQL server ready. Use scripts/setup_secure_sample.py to initialize authenticated access; legacy books are left unchanged.')
 if __name__=='__main__':main()

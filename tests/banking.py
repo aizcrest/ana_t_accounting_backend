@@ -2,7 +2,7 @@
 import json,os,pathlib,subprocess,tempfile,time,urllib.request,urllib.error,uuid
 ROOT=pathlib.Path(__file__).resolve().parents[1];DOTNET=os.environ.get('DOTNET_EXECUTABLE','dotnet')
 def main():
- database='accounting_test_'+uuid.uuid4().hex;env=os.environ.copy();binding=json.loads((ROOT/'.local/postgres-connection.json').read_text())['ConnectionStrings__Accounting'];env.update(ConnectionStrings__Accounting=binding.replace('Database=accounting;',f'Database={database};'),ASPNETCORE_URLS='http://127.0.0.1:5083')
+ database='accounting_test_'+uuid.uuid4().hex;env=os.environ.copy();env.update(Ledger__Mode="LegacyTest",ASPNETCORE_ENVIRONMENT="Development");binding=json.loads((ROOT/'.local/postgres-connection.json').read_text())['ConnectionStrings__Accounting'];env.update(ConnectionStrings__Accounting=binding.replace('Database=accounting;',f'Database={database};'),ASPNETCORE_URLS='http://127.0.0.1:5083')
  with tempfile.TemporaryDirectory() as tmp:
   env['ACCOUNTING_DATA_PATH']=tmp+'/ledger.json'
   def start():return subprocess.Popen([DOTNET,str(ROOT/'bin/Debug/net10.0/Accounting.Api.dll')],env=env,cwd=ROOT,stdout=subprocess.DEVNULL)
@@ -16,9 +16,9 @@ def main():
     try:req('health');return
     except Exception:time.sleep(.1)
    raise RuntimeError('API did not start')
-  def reject(path,body,method='POST'):
+  def reject(path,body,method='POST',status=400):
    try:req(path,method,body);raise AssertionError('Expected rejection '+path)
-   except urllib.error.HTTPError as e:assert e.code==400,(path,e.code)
+   except urllib.error.HTTPError as e:assert e.code==status,(path,e.code)
   try:
    ready();assert not req('banks')['banks'];state=req('state');cash=next(a for a in state['accounts'] if a['name']=='Cash in bank');expense=next(a for a in state['accounts'] if a['category']=='Expense' and a['level']==8)
    profile=req('canteen')['profile'];profile.update(schoolId='DEMO-BANK',schoolHead='Demo Head',preparedBy='Demo Preparer');req('canteen/profile','PUT',profile)
@@ -35,7 +35,7 @@ def main():
    req('canteen/inputs','POST',input(second['id'],25,'Outstanding check'));assert req('banks/'+first['id']+'/reconciliation?month=2026-01')['report']['sections'][0]['rows'][-1][-1]==0
    assert req('banks/'+second['id']+'/reconciliation?month=2026-01')['report']['sections'][0]['rows'][-1][-1]==-25
    assert req('canteen/reports/bank-reconciliation?month=2026-01')['sections'][0]['rows'][4][-1]==103000
-   reject('canteen/inputs',input('missing-bank'));reject('canteen/inputs',input(first['id'],0,'Financial statement note'))
+   reject('canteen/inputs',input('missing-bank'),status=404);reject('canteen/inputs',input(first['id'],0,'Financial statement note'))
    ranges=dict(id='',bankId=first['id'],prefix='CHK-',startNumber=1,endNumber=100,numberWidth=6,description='Book A',active=True)
    created=req('banks/check-ranges','POST',ranges);assert created['numberWidth']==6
    reject('banks/check-ranges',{**ranges,'startNumber':50,'endNumber':200})

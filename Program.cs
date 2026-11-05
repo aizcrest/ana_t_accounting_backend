@@ -1,65 +1,38 @@
-using System.Text.Json;
-var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddCors(o=>o.AddDefaultPolicy(p=>p.WithOrigins("http://localhost:5173","http://127.0.0.1:5173").AllowAnyHeader().AllowAnyMethod()));
-var app = builder.Build(); app.UseCors(); app.UseDefaultFiles(); app.UseStaticFiles();
-var gate=new object(); var path=Environment.GetEnvironmentVariable("ACCOUNTING_DATA_PATH")??Path.Combine(app.Environment.ContentRootPath,"data","ledger.json");
-Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-var opts=new JsonSerializerOptions(JsonSerializerDefaults.Web){WriteIndented=true};
+using Microsoft.EntityFrameworkCore;
+using System.Security;
+var builder=WebApplication.CreateBuilder(args);
+if(Provisioning.IsCommand(args)){
+ builder.Configuration["Ledger:ProvisioningCommand"]="true";
+ builder.Configuration["ConnectionStrings:Control"]=Provisioning.ControlOwner(builder.Configuration);
+}
 if(args.Contains("--report-export-self-test")){ReportExportValidation.Run();return;}
-var connectionString=builder.Configuration.GetConnectionString("Accounting");
-if(args.Contains("--database-self-test")){
- if(string.IsNullOrWhiteSpace(connectionString))throw new InvalidOperationException("SQL connection required for SQL integration checks.");
- PostgresStoreSelfTest.Run(connectionString);return;
+if(!Provisioning.IsCommand(args))builder.Configuration["Ledger:ProvisioningCommand"]="false";
+SecuritySetup.Configure(builder);
+var app=builder.Build();
+if(Provisioning.IsCommand(args)){await Provisioning.Run(app,args);return;}
+if(SecuritySetup.IsLegacy(app.Configuration)){
+ app.Services.GetRequiredService<LegacyTestWorkspace>().Initialize(app.Configuration);
+ if(args.Contains("--check-database")){Console.WriteLine("Explicit regression-mode ledger storage initialized.");return;}
+ if(args.Contains("--database-self-test")){PostgresStoreSelfTest.Run(app.Configuration.GetConnectionString("Accounting")!);return;}
+}else{
+ if(!string.IsNullOrWhiteSpace(app.Configuration.GetConnectionString("Provisioning")))throw new InvalidOperationException("Provisioning credentials must not be present in the web process.");
+ using var scope=app.Services.CreateScope();if(!await scope.ServiceProvider.GetRequiredService<ControlDb>().Database.CanConnectAsync())throw new InvalidOperationException("Control database is unavailable. No default school or anonymous fallback is used.");
 }
-var sqlStore=string.IsNullOrWhiteSpace(connectionString)?null:new PostgresLedgerStore(connectionString);
-sqlStore?.Initialize();
-var existing=sqlStore?.Load();
-var db=existing??(File.Exists(path)?JsonSerializer.Deserialize<Database>(File.ReadAllText(path),opts)!:Seed.Create());
-void Save(){
- if(sqlStore is not null){try{sqlStore.Save(db);}catch{db=sqlStore.Load()??Seed.Create();throw;}return;}
- var temp=path+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(db,opts));File.Move(temp,path,true);
-}
-if(sqlStore is null || existing is null)Save();
-if(args.Contains("--check-database")){
- if(sqlStore is null)throw new InvalidOperationException("Set ConnectionStrings__Accounting to initialize/check PostgreSQL.");
- Console.WriteLine($"PostgreSQL persistence verified: {db.Accounts.Count} accounts, {db.Documents.Count} documents.");return;
-}
-app.Use(async(ctx,next)=>{try {await next();}catch(LedgerConflictException){ctx.Response.StatusCode=409;await ctx.Response.WriteAsJsonAsync(new{error="Ledger changed in another process. Reload and retry."});}catch(Npgsql.NpgsqlException){ctx.Response.StatusCode=503;await ctx.Response.WriteAsJsonAsync(new{error="Database write failed; no changes were saved. Check server logs and database constraints."});}catch(ArgumentException e){ctx.Response.StatusCode=400;await ctx.Response.WriteAsJsonAsync(new{error=e.Message});}});
-app.MapGet("/api/health",()=>new{status="ok",framework=System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,storage=sqlStore is null?"JSON":"PostgreSQL",mode="Local development — no authentication",currency="PHP"});
-app.MapGet("/api/state",()=>{lock(gate)return Results.Json(db,opts);});
-app.MapPost("/api/accounts",(Account a)=>{lock(gate){if(a.Level<1||a.Level>8||db.Accounts.Any(x=>x.Code==a.Code)||string.IsNullOrWhiteSpace(a.Name))throw new ArgumentException("Unique code, name and level 1–8 required.");if(a.Level>1&&!db.Accounts.Any(x=>x.Code==a.Parent&&x.Level==a.Level-1&&x.Category==a.Category))throw new ArgumentException("Parent must be one level above in the same category.");if(a.Level==1&&a.Parent!=null)throw new ArgumentException("Root cannot have a parent.");if(!new[]{"Asset","Liability","Equity","Revenue","Expense"}.Contains(a.Category))throw new ArgumentException("Invalid account category.");db.Accounts.Add(a);Save();return Results.Ok(a);}});
-app.MapPost("/api/cards",(Card c)=>{lock(gate){if(string.IsNullOrWhiteSpace(c.Name)||!new[]{"Customer","Supplier","Employee","Other"}.Contains(c.Type))throw new ArgumentException("Name and valid card type required.");c=c with{Id=Guid.NewGuid().ToString()};db.Cards.Add(c);Save();return Results.Ok(c);}});
-app.MapPost("/api/items",(Item i)=>{lock(gate){if(string.IsNullOrWhiteSpace(i.Name)||i.Price<0||!db.Accounts.Any(a=>a.Code==i.RevenueAccount&&a.Level==8&&a.Category=="Revenue")||!db.Accounts.Any(a=>a.Code==i.ExpenseAccount&&a.Level==8&&a.Category=="Expense"))throw new ArgumentException("Name, nonnegative price and valid revenue/expense leaf accounts required.");i=i with{Id=Guid.NewGuid().ToString()};db.Items.Add(i);Save();return Results.Ok(i);}});
-app.MapPut("/api/approvals",(List<Signatory> s)=>{lock(gate){var required=new[]{"Prepared by","Checked by","Verified by","Noted by","Approver"};if(s.Count!=5||required.Any(r=>s.Count(x=>x.Role==r&& !string.IsNullOrWhiteSpace(x.Name))!=1))throw new ArgumentException("Provide each of the five signatory roles once.");db.Signatories=s;Save();return Results.Ok(s);}});
-app.MapPut("/api/access",(List<AccessRule> rules)=>{lock(gate){db.Access=rules;Save();return Results.Ok(rules);}});
-app.MapPost("/api/documents",(Document input)=>{lock(gate){var types=new[]{"Purchase Request","Purchase Order","Sales Invoice","Collection","Accounts Payable","Disbursement","Adjustment/Journal"};if(!types.Contains(input.Type)||(input.Amount<=0||decimal.Round(input.Amount,2)!=input.Amount)||string.IsNullOrWhiteSpace(input.Memo))throw new ArgumentException("Valid type, description and positive amount required.");if(input.Type!="Adjustment/Journal"&&!db.Cards.Any(c=>c.Id==input.CardId))throw new ArgumentException("Select a card.");var parents=new Dictionary<string,string>{{"Purchase Order","Purchase Request"},{"Collection","Sales Invoice"},{"Disbursement","Accounts Payable"}};if(parents.TryGetValue(input.Type,out var pt)){var parent=db.Documents.SingleOrDefault(d=>d.Id==input.SourceId&&d.Type==pt);if(parent==null)throw new ArgumentException("Select the related "+pt+".");if(parent.CardId!=input.CardId)throw new ArgumentException("Card must match the source document.");if(pt!="Purchase Request"&&parent.Status!="Posted")throw new ArgumentException("Post the source document first.");var used=db.Documents.Where(d=>d.SourceId==parent.Id).Sum(d=>d.Amount);if(used+input.Amount>parent.Amount)throw new ArgumentException("Amount exceeds the source document's remaining balance.");}else if(input.SourceId!=null)throw new ArgumentException("This document type does not accept a source.");var d=input with{Id=Guid.NewGuid().ToString(),Number=$"{Seed.Prefix(input.Type)}-{db.Documents.Count+1:0000}",Status="Draft",ApprovalNames=new(db.Signatories)};db.Documents.Add(d);Save();return Results.Ok(d);}});
-app.MapPost("/api/documents/{id}/post",(string id)=>{lock(gate){var d=db.Documents.SingleOrDefault(x=>x.Id==id)??throw new ArgumentException("Document not found.");if(d.Status=="Posted")throw new ArgumentException("Already posted.");if(d.Type is "Purchase Request" or "Purchase Order")throw new ArgumentException("PR and PO are nonposting documents.");var lines=d.Lines;if(lines.Count<2||lines.Any(l=>l.Debit<0||l.Credit<0||decimal.Round(l.Debit,2)!=l.Debit||decimal.Round(l.Credit,2)!=l.Credit||(l.Debit>0)==(l.Credit>0)||!db.Accounts.Any(a=>a.Code==l.Account&&a.Level==8)))throw new ArgumentException("Use at least two valid level-eight accounts with one positive debit or credit per line.");if(lines.Sum(l=>l.Debit)!=lines.Sum(l=>l.Credit)||lines.Sum(l=>l.Debit)!=d.Amount)throw new ArgumentException("Debits and credits must balance and equal document amount.");if(lines.Any(l=>l.CardId!=null&&!db.Cards.Any(c=>c.Id==l.CardId)))throw new ArgumentException("Unknown card in journal line.");db.Documents[db.Documents.IndexOf(d)]=d with{Status="Posted"};Save();return Results.Ok();}});
-app.MapGet("/api/reports/{report}",(string report,DateOnly? from,DateOnly? to,string? account,string? card)=>{lock(gate){if(!new[]{"trial-balance","balance-sheet","general-ledger","subsidiary-ledger"}.Contains(report))throw new ArgumentException("Unknown report.");if(from>to)throw new ArgumentException("From date must precede to date.");var all=db.Documents.Where(d=>d.Status=="Posted"&&(!to.HasValue||d.Date<=to)).SelectMany(d=>d.Lines.Select(l=>new{d.Date,d.Number,d.Memo,l.Account,CardId=l.CardId??d.CardId,l.Debit,l.Credit})).ToList();all=all.Where(l=>(account==null||l.Account==account)&&(card==null||l.CardId==card)).ToList();var entries=all.Where(l=>(!from.HasValue||l.Date>=from)&& (account==null||l.Account==account)&&(card==null||l.CardId==card)).OrderBy(l=>l.Date).ThenBy(l=>l.Number).ToList();var balances=db.Accounts.Where(a=>a.Level==8).Select(a=>{var period=entries.Where(l=>l.Account==a.Code);var cumulative=all.Where(l=>l.Account==a.Code);var opening=all.Where(l=>l.Account==a.Code&&from.HasValue&&l.Date<from);return new{a.Code,a.Name,a.Category,Debit=period.Sum(l=>l.Debit),Credit=period.Sum(l=>l.Credit),Opening=opening.Sum(l=>l.Debit-l.Credit),Balance=cumulative.Sum(l=>l.Debit-l.Credit)};}).ToList();var assets=balances.Where(a=>a.Category=="Asset").Sum(a=>a.Balance);var liabilities=-balances.Where(a=>a.Category=="Liability").Sum(a=>a.Balance);var equity=-balances.Where(a=>a.Category=="Equity").Sum(a=>a.Balance);var earnings=-balances.Where(a=>a.Category is "Revenue" or "Expense").Sum(a=>a.Balance);return Results.Ok(new{report,from,to,entries,balances,totals=new{debit=entries.Sum(l=>l.Debit),credit=entries.Sum(l=>l.Credit),assets,liabilities,equity,earnings,difference=assets-liabilities-equity-earnings}});}});
-CanteenEndpoints.Map(app,()=>db,gate,Save);
-Banking.Map(app,()=>db,gate,Save);
-app.Map("/api/{**path}",()=>Results.NotFound());
-app.MapFallbackToFile("index.html");
+app.Use(async(h,next)=>{
+ h.Response.Headers["X-Content-Type-Options"]="nosniff";h.Response.Headers["Referrer-Policy"]="no-referrer";
+ h.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+ try{await next();}
+ catch(LedgerConflictException){h.Response.StatusCode=409;await h.Response.WriteAsJsonAsync(new{error="The ledger changed. Reload and retry."});}
+ catch(ResourceNotFoundException){h.Response.StatusCode=404;await h.Response.WriteAsJsonAsync(new{error="Resource not found."});}
+ catch(SecurityException e){app.Logger.LogWarning("School context validation denied request {Trace}: {Reason}",h.TraceIdentifier,e.Message);h.Response.StatusCode=403;await h.Response.WriteAsJsonAsync(new{error="School access unavailable."});}
+ catch(DbUpdateException e) when(e.InnerException is Npgsql.PostgresException{SqlState:"23505"}){h.Response.StatusCode=409;await h.Response.WriteAsJsonAsync(new{error="The account or assignment already exists. Reload and check the current school assignments."});}
+ catch(Npgsql.PostgresException e){app.Logger.LogWarning("Database operation rejected {Trace}: {SqlState}",h.TraceIdentifier,e.SqlState);h.Response.StatusCode=e.SqlState is "23505" or "40001"?409:503;await h.Response.WriteAsJsonAsync(new{error="Database operation failed. Reload or contact the administrator."});}
+ catch(Npgsql.NpgsqlException){h.Response.StatusCode=503;await h.Response.WriteAsJsonAsync(new{error="Database unavailable. No fallback school is used."});}
+ catch(ArgumentException e){h.Response.StatusCode=400;await h.Response.WriteAsJsonAsync(new{error=e.Message});}
+});
+app.UseDefaultFiles();app.UseStaticFiles(new StaticFileOptions{OnPrepareResponse=context=>{if(context.File.Name=="index.html")context.Context.Response.Headers.CacheControl="no-store";}});app.UseRouting();app.UseRateLimiter();app.UseAuthentication();app.UseMiddleware<SchoolAccessMiddleware>();
+app.MapGet("/api/health",()=>SecuritySetup.IsLegacy(app.Configuration)?Results.Ok(new{status="ok",storage=string.IsNullOrWhiteSpace(app.Configuration.GetConnectionString("Accounting"))?"JSON":"PostgreSQL"}):Results.Ok(new{status="ok",authentication="required",storage="school-isolated PostgreSQL",deviceAccess=SecuritySetup.RequiresDevice(app.Configuration)?"approved client certificate":"loopback development only"}));
+AuthEndpoints.Map(app);AccountingEndpoints.Map(app);CanteenEndpoints.Map(app);Banking.Map(app);
+app.Map("/api/{**path}",()=>Results.NotFound());app.MapFallbackToFile("index.html");
 app.Run();
-record Account(string Code,string Name,string Category,int Level,string? Parent);
-record Card(string Id,string Name,string Type,string Tin,string Address);
-record Item(string Id,string Name,string Kind,decimal Price,string RevenueAccount,string ExpenseAccount);
-record Signatory(string Role,string Name);
-record AccessRule(string Module,bool View,bool Create,bool Post);
-record Line(string Account,decimal Debit,decimal Credit,string? CardId);
-record Document(string Id,string Number,string Type,DateOnly Date,string? CardId,string? SourceId,string Memo,decimal Amount,string Status,List<Line> Lines,List<Signatory>? ApprovalNames);
-record Atc(string Code,string Description,string Source,string Verification);
-class Database{public List<Account> Accounts{get;set;}=[];public List<Card> Cards{get;set;}=[];public List<Item> Items{get;set;}=[];public List<Signatory> Signatories{get;set;}=[];public List<AccessRule> Access{get;set;}=[];public List<Document> Documents{get;set;}=[];public List<Atc> AtcCodes{get;set;}=[];public List<BankAccount> Banks{get;set;}=[];public List<CheckRange> CheckRanges{get;set;}=[];public SchoolProfile? CanteenProfile{get;set;}public List<CanteenInput> CanteenInputs{get;set;}=[];public List<CanteenSubmission> CanteenSubmissions{get;set;}=[];}
-static class Seed{
-public static string Prefix(string t)=>t switch{"Purchase Request"=>"PR","Purchase Order"=>"PO","Sales Invoice"=>"SI","Collection"=>"CR","Accounts Payable"=>"AP","Disbursement"=>"DV",_=>"JV"};
-public static Database Create(){var db=new Database();
-var groups=new[]{("1","Assets","Asset",new[]{"Cash in bank","Accounts receivable","Inventory","Input VAT","Property and equipment","Accumulated depreciation"}),("2","Liabilities","Liability",new[]{"Accounts payable","Output VAT","Withholding tax payable","Accrued expenses"}),("3","Equity","Equity",new[]{"Owner capital","Retained earnings"}),("4","Revenue","Revenue",new[]{"Sales revenue","Service revenue"}),("5","Expenses","Expense",new[]{"Cost of goods sold","Salaries expense","Rent expense","Utilities expense","Depreciation expense"})};
-foreach(var(g,name,category,leaves) in groups){string? parent=null;var code=g;var labels=new[]{name,category=="Asset"?"Operating assets":name+" group","General ledger","Domestic operations","Philippines","Head office","General"};for(int level=1;level<=7;level++){if(level>1)code+=".01";db.Accounts.Add(new(code,labels[level-1],category,level,parent));parent=code;}for(int i=0;i<leaves.Length;i++)db.Accounts.Add(new(code+$".{i+1:000}",leaves[i],category,8,code));}
-db.Cards=[new("customer-1","Sampaguita Trading","Customer","","Manila, Philippines"),new("supplier-1","Maharlika Supplies","Supplier","","Quezon City, Philippines")];
-string A(string n)=>db.Accounts.Single(a=>a.Name==n).Code;
-db.Items=[new("item-1","Accounting services","Service",10000,A("Service revenue"),A("Utilities expense"))];
-db.Signatories=new[]{"Prepared by","Checked by","Verified by","Noted by","Approver"}.Select(r=>new Signatory(r,"Demo "+r)).ToList();
-db.Access=new[]{"Chart of Accounts","Card file","Goods and services","ATC Codes","Approvals","Purchase Request","Purchase Order","Sales Invoice","Collection","Accounts Payable","Disbursement","Adjustment/Journal","Reports"}.Select(m=>new AccessRule(m,true,true,true)).ToList();
-// Reference examples only: no rates or automatic tax computation until verified against current BIR issuances.
-db.AtcCodes=[new("WI010","Professional fees — individuals","BIR Form 1601-EQ / applicable withholding regulations","Unverified reference; current BIR retrieval blocked"),new("WC010","Professional fees — corporations","BIR Form 1601-EQ / applicable withholding regulations","Unverified reference; current BIR retrieval blocked"),new("WI100","Rentals — individuals","BIR Form 1601-EQ","Unverified reference; current BIR retrieval blocked"),new("WC100","Rentals — corporations","BIR Form 1601-EQ","Unverified reference; current BIR retrieval blocked")];
-var date=new DateOnly(2026,1,1);Document D(string id,string type,string memo,decimal amount,string? card,string? source,string status,params Line[] lines)=>new(id,Prefix(type)+"-"+id,type,date,card,source,memo,amount,status,lines.ToList(),new(db.Signatories));
-db.Documents=[D("0001","Adjustment/Journal","Opening owner investment",100000,null,null,"Posted",new(A("Cash in bank"),100000,0,null),new(A("Owner capital"),0,100000,null)),D("0002","Sales Invoice","Services rendered on account",10000,"customer-1",null,"Posted",new(A("Accounts receivable"),10000,0,"customer-1"),new(A("Service revenue"),0,10000,"customer-1")),D("0003","Collection","Partial customer settlement",4000,"customer-1","0002","Posted",new(A("Cash in bank"),4000,0,"customer-1"),new(A("Accounts receivable"),0,4000,"customer-1")),D("0004","Purchase Request","Office supplies request",2500,"supplier-1",null,"Draft"),D("0005","Purchase Order","Office supplies order",2500,"supplier-1","0004","Draft"),D("0006","Accounts Payable","Utilities billed on account",2500,"supplier-1",null,"Posted",new(A("Utilities expense"),2500,0,"supplier-1"),new(A("Accounts payable"),0,2500,"supplier-1")),D("0007","Disbursement","Partial supplier settlement",1000,"supplier-1","0006","Posted",new(A("Accounts payable"),1000,0,"supplier-1"),new(A("Cash in bank"),0,1000,"supplier-1"))];return db;}}
+sealed class ResourceNotFoundException:Exception;
