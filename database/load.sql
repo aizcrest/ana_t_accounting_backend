@@ -1,4 +1,9 @@
 SELECT jsonb_build_object(
+'banks',COALESCE((SELECT jsonb_agg(to_jsonb(b) ORDER BY name,id) FROM banks b),'[]'::jsonb),
+'checkRanges',COALESCE((SELECT jsonb_agg(to_jsonb(r) ORDER BY "bankId","startNumber") FROM check_ranges r),'[]'::jsonb),
+'canteenProfile',(SELECT data FROM canteen_settings WHERE id=1),
+'canteenInputs',COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY date,id) FROM canteen_inputs i),'[]'::jsonb),
+'canteenSubmissions',COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY "periodEnd",id) FROM canteen_submissions s),'[]'::jsonb),
 'accounts',COALESCE((SELECT jsonb_agg(to_jsonb(a) ORDER BY level,code) FROM accounts a),'[]'::jsonb),
 'cards',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY name) FROM cards c),'[]'::jsonb),
 'items',COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY name) FROM items i),'[]'::jsonb),

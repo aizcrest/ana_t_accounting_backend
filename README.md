@@ -52,3 +52,11 @@ Official retrieval attempted on 2026-11-05 from https://www.bir.gov.ph and https
 ## Scope and limitations
 
 This is a functional local development prototype, not production accounting software. No authentication, tenant isolation, audit trail, approval-state workflow, period locks, reversal workflow, document editing/cancellation, automatic taxes, inventory costing, or statutory certification. Module access policies are persisted configuration only and do not enforce security. Signatories are names snapshotted on document creation, not digital approvals. All data is visible to anyone who can access the local API. Bind the API to loopback and use synthetic data. Build authentication and enforced authorization before any shared deployment.
+
+## School canteen reports
+
+Open **Canteen Reports** for the DM 536, s. 2026 library, school settings, supplementary records and submission tracking. All applicable reports export as portrait PDF, DOCX and XLSX. See [the report scope, data requirements and validation](docs/canteen-reporting.md). Migration 2 adds the reporting data alongside the existing PostgreSQL ledger. No existing data is reset. Run `dotnet run --no-build -- --report-export-self-test` and `DOTNET_EXECUTABLE=dotnet python3 tests/canteen_reports.py` to validate report formats and memo-specific workflows.
+
+## Bank List and Income Statement
+
+Open **Bank List** for Bank Information (GL account combobox), bank-specific Bank Reconciliation, and Check Setup with validated check-number ranges. **Income Statement** is a monthly management report with revenue, mapped COGS, gross profit, expenses and net income, in detailed/condensed form with PDF/DOCX/XLSX exports. See [banking setup and validation](docs/banking.md). Migration 3 preserves existing reconciliation records and adds bank/check-range tables. Run `DOTNET_EXECUTABLE=dotnet python3 tests/banking.py` to test these workflows.

@@ -22,7 +22,8 @@ sealed class PostgresLedgerStore
   }
   using var db=new NpgsqlConnection(connectionString);db.Open();using var transaction=db.BeginTransaction();
   using(var guard=new NpgsqlCommand("SELECT pg_advisory_xact_lock(81729461)",db,transaction))guard.ExecuteNonQuery();
-  using var command=new NpgsqlCommand(Script("001_initial.sql"),db,transaction);command.ExecuteNonQuery();transaction.Commit();
+  using var command=new NpgsqlCommand(Script("001_initial.sql"),db,transaction);command.ExecuteNonQuery();
+  using var supplement=new NpgsqlCommand(Script("002_canteen_reports.sql"),db,transaction);supplement.ExecuteNonQuery();using var banks=new NpgsqlCommand(Script("003_banks.sql"),db,transaction);banks.ExecuteNonQuery();transaction.Commit();
  }
  public Database? Load(){
   using var connection=new NpgsqlConnection(connectionString);connection.Open();using var transaction=connection.BeginTransaction(IsolationLevel.RepeatableRead);
